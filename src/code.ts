@@ -4,6 +4,11 @@
 // Show the plugin UI
 figma.showUI(__html__, { width: 450, height: 600 });
 
+// Constants
+const CLAUDE_API_URL = 'https://api.anthropic.com/v1/messages';
+const CLAUDE_MODEL = 'claude-sonnet-4-20250514';
+const MAX_ITERATIONS = 5;
+
 // Types
 interface ArticleContent {
   overline: string;
@@ -13,6 +18,15 @@ interface ArticleContent {
   url: string;
   dateline: string;
   body: string;
+}
+
+interface ClaudeMessage {
+  role: 'user' | 'assistant';
+  content: string;
+}
+
+interface ClaudeResponse {
+  content: Array<{ type: string; text: string }>;
 }
 
 interface ArticleLayout {
@@ -104,6 +118,83 @@ async function loadFontsForNode(textNode: TextNode): Promise<void> {
 async function setTextContent(textNode: TextNode, content: string): Promise<void> {
   await loadFontsForNode(textNode);
   textNode.characters = content;
+}
+
+// Count words in text
+function countWords(text: string): number {
+  return text.trim().split(/\s+/).filter(word => word.length > 0).length;
+}
+
+// Call Claude API to adjust content length
+async function adjustWithClaude(
+  content: string,
+  currentWords: number,
+  targetWords: number,
+  needsCondensing: boolean,
+  apiKey: string
+): Promise<string> {
+  const difference = Math.abs(currentWords - targetWords);
+
+  const prompt = needsCondensing
+    ? `You are editing a newspaper article that is slightly too long to fit its layout.
+
+ORIGINAL ARTICLE:
+${content}
+
+CURRENT WORD COUNT: ${currentWords} words
+TARGET WORD COUNT: ${targetWords} words (reduce by ${difference} words)
+
+REQUIREMENTS:
+1. Preserve the opening paragraph exactly
+2. Maintain all key facts and quotes
+3. End with a complete, natural-sounding sentence
+4. Preserve journalistic tone and quality
+5. The final paragraph must feel like a proper conclusion
+
+Return ONLY the adjusted article text, no explanations.`
+    : `You are editing a newspaper article that needs slightly more content to fill its layout.
+
+ORIGINAL ARTICLE:
+${content}
+
+CURRENT WORD COUNT: ${currentWords} words
+TARGET WORD COUNT: ${targetWords} words (add ${difference} words)
+
+REQUIREMENTS:
+1. Preserve the opening paragraph exactly
+2. Add relevant context or elaboration
+3. Do not fabricate facts or quotes
+4. Maintain journalistic tone and quality
+5. New content should integrate naturally
+
+Return ONLY the adjusted article text, no explanations.`;
+
+  const response = await fetch(CLAUDE_API_URL, {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json',
+      'x-api-key': apiKey,
+      'anthropic-version': '2023-06-01'
+    },
+    body: JSON.stringify({
+      model: CLAUDE_MODEL,
+      max_tokens: 4096,
+      messages: [{ role: 'user', content: prompt }]
+    })
+  });
+
+  if (!response.ok) {
+    const errorText = await response.text();
+    throw new Error(`API request failed: ${response.status} - ${errorText}`);
+  }
+
+  const data: ClaudeResponse = await response.json();
+
+  if (data.content && data.content.length > 0 && data.content[0].text) {
+    return data.content[0].text.trim();
+  }
+
+  throw new Error('Invalid response from Claude API');
 }
 
 // Handle messages from UI
@@ -206,6 +297,109 @@ figma.ui.onmessage = async (msg: { type: string; data?: any }) => {
           data: { overflow: 0, needsAdjustment: false }
         });
       }
+    }
+
+    if (msg.type === 'save-api-key') {
+      await figma.clientStorage.setAsync('claude_api_key', msg.data);
+      figma.ui.postMessage({ type: 'api-key-saved' });
+    }
+
+    if (msg.type === 'auto-fit') {
+      const content: ArticleContent = msg.data;
+      const selection = figma.currentPage.selection;
+
+      if (selection.length !== 1 || selection[0].type !== 'FRAME') {
+        figma.ui.postMessage({
+          type: 'error',
+          message: 'Please select an article frame first'
+        });
+        return;
+      }
+
+      const apiKey = await figma.clientStorage.getAsync('claude_api_key');
+      if (!apiKey) {
+        figma.ui.postMessage({
+          type: 'error',
+          message: 'Please save your Claude API key first'
+        });
+        return;
+      }
+
+      const layout = detectLayout(selection[0] as FrameNode);
+
+      if (layout.columns.length === 0) {
+        figma.ui.postMessage({
+          type: 'error',
+          message: 'No body columns detected in this frame'
+        });
+        return;
+      }
+
+      // Start auto-fit loop
+      let currentBody = content.body;
+      let iteration = 0;
+
+      while (iteration < MAX_ITERATIONS) {
+        iteration++;
+        figma.ui.postMessage({
+          type: 'iteration-update',
+          data: { iteration }
+        });
+
+        // Fill content with current body
+        const bodyWithDateline = content.dateline + '\n\n' + currentBody;
+        const paragraphs = bodyWithDateline.split('\n\n');
+        const columnsCount = layout.columns.length;
+        const paragraphsPerColumn = Math.ceil(paragraphs.length / columnsCount);
+
+        for (let i = 0; i < layout.columns.length; i++) {
+          const start = i * paragraphsPerColumn;
+          const end = Math.min(start + paragraphsPerColumn, paragraphs.length);
+          const columnText = paragraphs.slice(start, end).join('\n\n');
+          await setTextContent(layout.columns[i], columnText);
+        }
+
+        // Check overflow
+        const lastColumn = layout.columns[layout.columns.length - 1];
+        const overflow = await detectOverflow(lastColumn);
+
+        // Within tolerance (±5px)
+        if (Math.abs(overflow) <= 5) {
+          figma.ui.postMessage({
+            type: 'auto-fit-complete',
+            data: { iterations: iteration, overflow }
+          });
+          return;
+        }
+
+        // Calculate target word adjustment
+        const currentWords = countWords(currentBody);
+        const heightRatio = lastColumn.height / (lastColumn.height + overflow);
+        const targetWords = Math.floor(currentWords * heightRatio);
+
+        // Call Claude to adjust
+        try {
+          currentBody = await adjustWithClaude(
+            currentBody,
+            currentWords,
+            targetWords,
+            overflow > 0,
+            apiKey
+          );
+        } catch (error) {
+          figma.ui.postMessage({
+            type: 'error',
+            message: 'Claude API error: ' + (error instanceof Error ? error.message : 'Unknown error')
+          });
+          return;
+        }
+      }
+
+      // Max iterations reached
+      figma.ui.postMessage({
+        type: 'auto-fit-complete',
+        data: { iterations: iteration, overflow: 0, maxReached: true }
+      });
     }
 
     if (msg.type === 'close') {
