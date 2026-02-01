@@ -1,0 +1,228 @@
+<!DOCTYPE html>
+<html>
+<head>
+  <style>
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+    body { font-family: Inter, -apple-system, BlinkMacSystemFont, sans-serif; font-size: 12px; padding: 16px; background: #fff; }
+    h2 { font-size: 14px; margin-bottom: 12px; color: #333; }
+    .section { margin-bottom: 16px; padding: 12px; background: #f5f5f5; border-radius: 8px; }
+    .section-title { font-weight: 600; margin-bottom: 8px; color: #666; }
+    .field { margin-bottom: 8px; }
+    .field label { display: block; font-size: 11px; color: #666; margin-bottom: 4px; }
+    .field input, .field textarea { width: 100%; padding: 8px; border: 1px solid #ddd; border-radius: 4px; font-size: 12px; }
+    .field textarea { min-height: 80px; resize: vertical; }
+    button { padding: 10px 16px; border: none; border-radius: 6px; cursor: pointer; font-size: 12px; font-weight: 500; }
+    .btn-primary { background: #18a0fb; color: white; }
+    .btn-primary:hover { background: #0d8de8; }
+    .btn-secondary { background: #e5e5e5; color: #333; }
+    .btn-secondary:hover { background: #d5d5d5; }
+    .btn-row { display: flex; gap: 8px; margin-top: 16px; }
+    .status { padding: 8px 12px; border-radius: 4px; margin-top: 12px; display: none; }
+    .status.error { background: #ffebee; color: #c62828; display: block; }
+    .status.success { background: #e8f5e9; color: #2e7d32; display: block; }
+    .status.info { background: #e3f2fd; color: #1565c0; display: block; }
+    .layout-info { font-size: 11px; color: #666; }
+    .layout-info span { display: inline-block; margin-right: 12px; }
+    .api-section { margin-top: 16px; padding-top: 16px; border-top: 1px solid #ddd; }
+    .hidden { display: none; }
+    .overflow-warning { background: #fff3e0; padding: 8px; border-radius: 4px; margin-top: 8px; color: #e65100; font-size: 11px; }
+    .progress { margin-top: 8px; }
+    .progress-bar { height: 4px; background: #e0e0e0; border-radius: 2px; overflow: hidden; }
+    .progress-fill { height: 100%; background: #18a0fb; width: 0%; transition: width 0.3s; }
+  </style>
+</head>
+<body>
+  <h2>SA News Auto-Fill</h2>
+
+  <div class="section">
+    <div class="section-title">1. Detect Layout</div>
+    <p style="font-size: 11px; color: #666; margin-bottom: 8px;">Select an article frame and detect its structure.</p>
+    <button class="btn-secondary" id="detectBtn">Detect Layout</button>
+    <div id="layoutInfo" class="layout-info hidden"></div>
+  </div>
+
+  <div class="section">
+    <div class="section-title">2. Article Content</div>
+    <div class="field">
+      <label>Overline / Headline</label>
+      <input type="text" id="overline" placeholder="BREAKING NEWS">
+    </div>
+    <div class="field">
+      <label>Title</label>
+      <input type="text" id="title" placeholder="Article Title">
+    </div>
+    <div class="field">
+      <label>Subtitle</label>
+      <input type="text" id="subtitle" placeholder="Brief summary of the article">
+    </div>
+    <div class="field">
+      <label>Source</label>
+      <input type="text" id="source" placeholder="Times of India">
+    </div>
+    <div class="field">
+      <label>URL</label>
+      <input type="text" id="url" placeholder="https://...">
+    </div>
+    <div class="field">
+      <label>Dateline</label>
+      <input type="text" id="dateline" placeholder="New Delhi, Jan 31">
+    </div>
+    <div class="field">
+      <label>Body</label>
+      <textarea id="body" placeholder="Full article text..."></textarea>
+    </div>
+  </div>
+
+  <div class="section api-section">
+    <div class="section-title">3. Claude API (Optional)</div>
+    <p style="font-size: 11px; color: #666; margin-bottom: 8px;">For automatic content adjustment when text overflows.</p>
+    <div class="field">
+      <label>API Key</label>
+      <input type="password" id="apiKey" placeholder="sk-ant-...">
+    </div>
+    <button class="btn-secondary" id="saveApiKey">Save API Key</button>
+  </div>
+
+  <div class="btn-row">
+    <button class="btn-primary" id="fillBtn">Fill Content</button>
+    <button class="btn-secondary" id="autoFitBtn">Auto-Fit with Claude</button>
+  </div>
+
+  <div id="status" class="status"></div>
+
+  <div id="overflowWarning" class="overflow-warning hidden">
+    Content overflows by <span id="overflowAmount"></span>px. Click "Auto-Fit with Claude" to adjust.
+  </div>
+
+  <div id="progress" class="progress hidden">
+    <div style="font-size: 11px; color: #666; margin-bottom: 4px;">Adjusting content... Iteration <span id="iteration">1</span></div>
+    <div class="progress-bar"><div class="progress-fill" id="progressFill"></div></div>
+  </div>
+
+  <script>
+    // DOM elements
+    const detectBtn = document.getElementById('detectBtn');
+    const fillBtn = document.getElementById('fillBtn');
+    const autoFitBtn = document.getElementById('autoFitBtn');
+    const saveApiKeyBtn = document.getElementById('saveApiKey');
+    const statusEl = document.getElementById('status');
+    const layoutInfoEl = document.getElementById('layoutInfo');
+    const overflowWarningEl = document.getElementById('overflowWarning');
+    const overflowAmountEl = document.getElementById('overflowAmount');
+    const progressEl = document.getElementById('progress');
+    const iterationEl = document.getElementById('iteration');
+    const progressFillEl = document.getElementById('progressFill');
+
+    // Show status message
+    function showStatus(message, type) {
+      statusEl.textContent = message;
+      statusEl.className = 'status ' + type;
+    }
+
+    // Get article content from form
+    function getContent() {
+      return {
+        overline: document.getElementById('overline').value,
+        title: document.getElementById('title').value,
+        subtitle: document.getElementById('subtitle').value,
+        source: document.getElementById('source').value,
+        url: document.getElementById('url').value,
+        dateline: document.getElementById('dateline').value,
+        body: document.getElementById('body').value
+      };
+    }
+
+    // Detect layout button
+    detectBtn.addEventListener('click', function() {
+      parent.postMessage({ pluginMessage: { type: 'detect-layout' } }, '*');
+    });
+
+    // Fill content button
+    fillBtn.addEventListener('click', function() {
+      const content = getContent();
+      if (!content.body) {
+        showStatus('Please enter article body text', 'error');
+        return;
+      }
+      parent.postMessage({ pluginMessage: { type: 'fill-content', data: content } }, '*');
+      showStatus('Filling content...', 'info');
+    });
+
+    // Save API key button
+    saveApiKeyBtn.addEventListener('click', function() {
+      const apiKey = document.getElementById('apiKey').value;
+      if (!apiKey) {
+        showStatus('Please enter an API key', 'error');
+        return;
+      }
+      parent.postMessage({ pluginMessage: { type: 'save-api-key', data: apiKey } }, '*');
+    });
+
+    // Auto-fit button
+    autoFitBtn.addEventListener('click', function() {
+      const content = getContent();
+      if (!content.body) {
+        showStatus('Please enter article body text', 'error');
+        return;
+      }
+      parent.postMessage({ pluginMessage: { type: 'auto-fit', data: content } }, '*');
+      progressEl.classList.remove('hidden');
+      iterationEl.textContent = '1';
+      progressFillEl.style.width = '10%';
+    });
+
+    // Handle messages from plugin
+    window.onmessage = function(event) {
+      const msg = event.data.pluginMessage;
+      if (!msg) return;
+
+      if (msg.type === 'layout-detected') {
+        layoutInfoEl.classList.remove('hidden');
+        const info = msg.data;
+        let text = '';
+        if (info.hasHeadline) text += 'Headline ';
+        if (info.hasTitle) text += 'Title ';
+        if (info.hasSubtitle) text += 'Subtitle ';
+        if (info.hasSource) text += 'Source ';
+        if (info.hasUrl) text += 'URL ';
+        text += info.columnCount + ' column(s)';
+        layoutInfoEl.textContent = 'Detected: ' + text;
+        showStatus('Layout detected successfully', 'success');
+      }
+
+      if (msg.type === 'fill-complete') {
+        if (msg.data.needsAdjustment) {
+          overflowWarningEl.classList.remove('hidden');
+          overflowAmountEl.textContent = Math.round(msg.data.overflow);
+          showStatus('Content filled but overflows', 'info');
+        } else {
+          overflowWarningEl.classList.add('hidden');
+          showStatus('Content filled successfully', 'success');
+        }
+        progressEl.classList.add('hidden');
+      }
+
+      if (msg.type === 'iteration-update') {
+        iterationEl.textContent = msg.data.iteration;
+        progressFillEl.style.width = Math.min(90, msg.data.iteration * 20) + '%';
+      }
+
+      if (msg.type === 'auto-fit-complete') {
+        progressEl.classList.add('hidden');
+        progressFillEl.style.width = '100%';
+        overflowWarningEl.classList.add('hidden');
+        showStatus('Content adjusted to fit perfectly after ' + msg.data.iterations + ' iteration(s)', 'success');
+      }
+
+      if (msg.type === 'api-key-saved') {
+        showStatus('API key saved securely', 'success');
+      }
+
+      if (msg.type === 'error') {
+        showStatus(msg.message, 'error');
+        progressEl.classList.add('hidden');
+      }
+    };
+  </script>
+</body>
+</html>
