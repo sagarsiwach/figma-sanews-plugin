@@ -4,9 +4,9 @@
 // Show the plugin UI
 figma.showUI(__html__, { width: 450, height: 600 });
 
-// Constants
-const CLAUDE_API_URL = 'https://api.anthropic.com/v1/messages';
-const CLAUDE_MODEL = 'claude-sonnet-4-20250514';
+// Constants - Using Antigravity Proxy
+const CLAUDE_API_URL = 'http://proxy.classicgroup.asia/v1/messages';
+const CLAUDE_MODEL = 'claude-sonnet-4-5-thinking';
 const MAX_ITERATIONS = 5;
 
 // Types
@@ -125,7 +125,7 @@ function countWords(text: string): number {
   return text.trim().split(/\s+/).filter(word => word.length > 0).length;
 }
 
-// Call Claude API to adjust content length
+// Call Claude API to adjust content length (via Antigravity proxy)
 async function adjustWithClaude(
   content: string,
   currentWords: number,
@@ -300,7 +300,7 @@ figma.ui.onmessage = async (msg: { type: string; data?: any }) => {
     }
 
     if (msg.type === 'save-api-key') {
-      await figma.clientStorage.setAsync('claude_api_key', msg.data);
+      await figma.clientStorage.setAsync('antigravity_api_key', msg.data);
       figma.ui.postMessage({ type: 'api-key-saved' });
     }
 
@@ -316,11 +316,11 @@ figma.ui.onmessage = async (msg: { type: string; data?: any }) => {
         return;
       }
 
-      const apiKey = await figma.clientStorage.getAsync('claude_api_key');
+      const apiKey = await figma.clientStorage.getAsync('antigravity_api_key');
       if (!apiKey) {
         figma.ui.postMessage({
           type: 'error',
-          message: 'Please save your Claude API key first'
+          message: 'Please save your Antigravity API key first'
         });
         return;
       }
@@ -377,7 +377,7 @@ figma.ui.onmessage = async (msg: { type: string; data?: any }) => {
         const heightRatio = lastColumn.height / (lastColumn.height + overflow);
         const targetWords = Math.floor(currentWords * heightRatio);
 
-        // Call Claude to adjust
+        // Call Claude to adjust via Antigravity proxy
         try {
           currentBody = await adjustWithClaude(
             currentBody,
@@ -389,7 +389,7 @@ figma.ui.onmessage = async (msg: { type: string; data?: any }) => {
         } catch (error) {
           figma.ui.postMessage({
             type: 'error',
-            message: 'Claude API error: ' + (error instanceof Error ? error.message : 'Unknown error')
+            message: 'Antigravity API error: ' + (error instanceof Error ? error.message : 'Unknown error')
           });
           return;
         }
