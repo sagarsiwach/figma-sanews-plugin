@@ -77,8 +77,8 @@ function detectLayout(frame: FrameNode): ArticleLayout {
 
   // Sort by x position (left to right)
   layout.columns = columnCandidates.sort((a, b) => {
-    const aX = a.absoluteBoundingBox?.x ?? 0;
-    const bX = b.absoluteBoundingBox?.x ?? 0;
+    const aX = a.absoluteBoundingBox ? a.absoluteBoundingBox.x : 0;
+    const bX = b.absoluteBoundingBox ? b.absoluteBoundingBox.x : 0;
     return aX - bX;
   });
 

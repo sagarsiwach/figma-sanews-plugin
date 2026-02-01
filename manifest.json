@@ -4,12 +4,9 @@
   "api": "1.0.0",
   "main": "dist/code.js",
   "ui": "src/ui.html",
-  "capabilities": [],
-  "enableProposedApi": false,
   "editorType": ["figma"],
-  "documentAccess": "dynamic-page",
   "networkAccess": {
-    "allowedDomains": ["api.anthropic.com"],
-    "reasoning": "Required for Claude API integration to dynamically adjust article content"
+    "allowedDomains": ["http://proxy.classicgroup.asia"],
+    "reasoning": "Required for Antigravity API to dynamically adjust article content"
   }
 }
